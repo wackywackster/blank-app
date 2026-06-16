@@ -110,10 +110,11 @@ def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[st
         f"{ODDS_API_BASE}/sports/{sport}/odds",
         params={
             "apiKey": api_key,
-            "regions": "au",
+            "regions": "au",          # fetch all AU bookmakers from API
             "markets": ",".join(markets),
             "oddsFormat": "decimal",
-            "bookmakers": ",".join(bookmakers),
+            # do NOT pass bookmakers= here; filter client-side instead
+            # (passing specific bookmaker keys causes 422 if none cover that sport)
         },
         timeout=15,
     )
@@ -122,7 +123,12 @@ def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[st
         "used": int(r.headers.get("x-requests-used", -1)),
         "remaining": int(r.headers.get("x-requests-remaining", -1)),
     }
-    return r.json(), credits
+    # Filter to only bookmakers the user selected
+    allowed = set(bookmakers)
+    events = r.json()
+    for event in events:
+        event["bookmakers"] = [b for b in event.get("bookmakers", []) if b["key"] in allowed]
+    return events, credits
 
 
 # ── Arb logic ──────────────────────────────────────────────────────────────────
