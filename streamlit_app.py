@@ -84,6 +84,18 @@ MARKET_LABELS = {v: k for k, v in MARKET_OPTIONS.items()}
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_active_sports(api_key: str) -> list[dict]:
+    """Return sports that currently have upcoming events."""
+    r = requests.get(
+        f"{ODDS_API_BASE}/sports",
+        params={"apiKey": api_key, "all": "false"},
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()  # list of {key, title, description, active, has_outrights}
+
+
 def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[str]) -> list[dict]:
     r = requests.get(
         f"{ODDS_API_BASE}/sports/{sport}/odds",
@@ -239,8 +251,28 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Sports")
-    selected_sports = st.multiselect("Sports to scan", list(SPORTS_OPTIONS.keys()),
-                                     default=["AFL", "NRL"])
+    if api_key:
+        with st.spinner("Loading active sports…"):
+            try:
+                _active = fetch_active_sports(api_key)
+                # Build {display_title: api_key} from live data, sorted by title
+                _active_sorted = sorted(_active, key=lambda s: s["title"])
+                live_sports = {s["title"]: s["key"] for s in _active_sorted}
+                sport_help = f"{len(live_sports)} sports with active events right now"
+            except Exception as e:
+                live_sports = SPORTS_OPTIONS
+                sport_help = f"Could not load live sports ({e}). Showing defaults."
+    else:
+        live_sports = SPORTS_OPTIONS
+        sport_help = "Enter API key to load live sports"
+
+    selected_sport_names = st.multiselect(
+        "Sports to scan",
+        list(live_sports.keys()),
+        default=list(live_sports.keys())[:5],
+        help=sport_help,
+    )
+    selected_sports = {name: live_sports[name] for name in selected_sport_names}
 
     st.subheader("Markets")
     selected_markets = st.multiselect(
@@ -309,7 +341,7 @@ if not api_key:
     """)
     st.stop()
 
-if not selected_sports or not selected_markets or not all_books:
+if not selected_sport_names or not selected_markets or not all_books:
     st.warning("Select at least one sport, market type, and bookmaker in the sidebar.")
     st.stop()
 
@@ -320,8 +352,7 @@ if scan_btn:
     errors: list[str] = []
 
     progress = st.progress(0, text="Scanning…")
-    for i, sport_name in enumerate(selected_sports):
-        sport_key = SPORTS_OPTIONS[sport_name]
+    for i, (sport_name, sport_key) in enumerate(selected_sports.items()):
         progress.progress((i + 1) / len(selected_sports), text=f"Fetching {sport_name}…")
         try:
             events = fetch_odds(api_key, sport_key, all_books, market_keys)
