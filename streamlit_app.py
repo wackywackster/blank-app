@@ -84,19 +84,28 @@ MARKET_LABELS = {v: k for k, v in MARKET_OPTIONS.items()}
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_active_sports(api_key: str) -> list[dict]:
-    """Return sports that currently have upcoming events."""
+def check_credits(api_key: str) -> dict:
+    """Hit the sports endpoint and return credit info from headers."""
     r = requests.get(
         f"{ODDS_API_BASE}/sports",
         params={"apiKey": api_key, "all": "false"},
         timeout=10,
     )
     r.raise_for_status()
-    return r.json()  # list of {key, title, description, active, has_outrights}
+    return {
+        "sports": r.json(),
+        "used": int(r.headers.get("x-requests-used", -1)),
+        "remaining": int(r.headers.get("x-requests-remaining", -1)),
+    }
 
 
-def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[str]) -> list[dict]:
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_active_sports(api_key: str) -> list[dict]:
+    """Return sports that currently have upcoming events."""
+    return check_credits(api_key)["sports"]
+
+
+def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[str]) -> tuple[list[dict], dict]:
     r = requests.get(
         f"{ODDS_API_BASE}/sports/{sport}/odds",
         params={
@@ -109,7 +118,11 @@ def fetch_odds(api_key: str, sport: str, bookmakers: list[str], markets: list[st
         timeout=15,
     )
     r.raise_for_status()
-    return r.json()
+    credits = {
+        "used": int(r.headers.get("x-requests-used", -1)),
+        "remaining": int(r.headers.get("x-requests-remaining", -1)),
+    }
+    return r.json(), credits
 
 
 # ── Arb logic ──────────────────────────────────────────────────────────────────
@@ -250,21 +263,38 @@ with st.sidebar:
                             help="Free key at https://the-odds-api.com")
 
     st.markdown("---")
-    st.subheader("Sports")
+
+    # ── Credits check ──────────────────────────────────────────────────────────
     if api_key:
-        with st.spinner("Loading active sports…"):
-            try:
-                _active = fetch_active_sports(api_key)
-                # Build {display_title: api_key} from live data, sorted by title
-                _active_sorted = sorted(_active, key=lambda s: s["title"])
-                live_sports = {s["title"]: s["key"] for s in _active_sorted}
-                sport_help = f"{len(live_sports)} sports with active events right now"
-            except Exception as e:
-                live_sports = SPORTS_OPTIONS
-                sport_help = f"Could not load live sports ({e}). Showing defaults."
+        try:
+            _credit_info = check_credits(api_key)
+            _used = _credit_info["used"]
+            _remaining = _credit_info["remaining"]
+            _active_raw = _credit_info["sports"]
+            if _remaining >= 0:
+                credit_color = "red" if _remaining < 20 else "orange" if _remaining < 100 else "green"
+                st.markdown(
+                    f"**API Credits:** :{credit_color}[{_remaining} remaining] / {_used + _remaining} total"
+                )
+                if _remaining == 0:
+                    st.error("No API credits remaining. Scanning will fail until your quota resets.")
+            live_sports = {s["title"]: s["key"] for s in sorted(_active_raw, key=lambda s: s["title"])}
+            sport_help = f"{len(live_sports)} sports with active events right now"
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 401:
+                st.error("Invalid API key.")
+            else:
+                st.warning(f"Could not reach API: {e}")
+            live_sports = SPORTS_OPTIONS
+            sport_help = "API error — showing default sports list"
+        except Exception as e:
+            live_sports = SPORTS_OPTIONS
+            sport_help = f"Could not load live sports: {e}"
     else:
         live_sports = SPORTS_OPTIONS
         sport_help = "Enter API key to load live sports"
+
+    st.subheader("Sports")
 
     selected_sport_names = st.multiselect(
         "Sports to scan",
@@ -372,7 +402,8 @@ if scan_btn:
         progress.progress(pct, text=f"Fetching {sport_name}…")
         status.caption(f"Sport {i+1}/{len(selected_sports)}: {sport_name} ({sport_key})")
         try:
-            events = fetch_odds(api_key, sport_key, all_books, market_keys)
+            events, credits = fetch_odds(api_key, sport_key, all_books, market_keys)
+            st.session_state["last_credits"] = credits
             arbs = find_arbs(events, betfair_commission, min_profit=0)
             all_arbs.extend(arbs)
         except requests.HTTPError as e:
