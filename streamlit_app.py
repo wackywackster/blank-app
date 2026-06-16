@@ -342,8 +342,18 @@ if not api_key:
     st.stop()
 
 if not selected_sport_names or not selected_markets or not all_books:
-    st.warning("Select at least one sport, market type, and bookmaker in the sidebar.")
+    missing = []
+    if not selected_sport_names: missing.append("sport")
+    if not selected_markets: missing.append("market type")
+    if not all_books: missing.append("bookmaker")
+    st.warning(f"Select at least one {', '.join(missing)} in the sidebar.")
     st.stop()
+
+# ── Scan status strip ──────────────────────────────────────────────────────────
+with st.expander("Scan config (click to verify before scanning)", expanded=False):
+    st.write(f"**Sports ({len(selected_sports)}):** {', '.join(selected_sports.keys()) or '—'}")
+    st.write(f"**Markets ({len(selected_markets)}):** {', '.join(selected_markets) or '—'}")
+    st.write(f"**Bookmakers ({len(all_books)}):** {', '.join(all_books) or '—'}")
 
 # ── Scan ───────────────────────────────────────────────────────────────────────
 if scan_btn:
@@ -351,31 +361,40 @@ if scan_btn:
     all_arbs: list[dict] = []
     errors: list[str] = []
 
+    if not selected_sports:
+        st.error("No sports selected — pick at least one in the sidebar.")
+        st.stop()
+
     progress = st.progress(0, text="Scanning…")
+    status = st.empty()
     for i, (sport_name, sport_key) in enumerate(selected_sports.items()):
-        progress.progress((i + 1) / len(selected_sports), text=f"Fetching {sport_name}…")
+        pct = (i + 1) / len(selected_sports)
+        progress.progress(pct, text=f"Fetching {sport_name}…")
+        status.caption(f"Sport {i+1}/{len(selected_sports)}: {sport_name} ({sport_key})")
         try:
             events = fetch_odds(api_key, sport_key, all_books, market_keys)
-            arbs = find_arbs(events, betfair_commission, min_profit=0)  # filter later
+            arbs = find_arbs(events, betfair_commission, min_profit=0)
             all_arbs.extend(arbs)
         except requests.HTTPError as e:
             code = e.response.status_code if e.response is not None else 0
             if code == 401:
-                st.error("Invalid API key.")
+                st.error("Invalid API key — check the key in the sidebar.")
                 st.stop()
             elif code == 422:
-                errors.append(f"{sport_name}: not currently available")
+                errors.append(f"{sport_name}: no current events")
             else:
-                errors.append(f"{sport_name}: HTTP {code}")
+                errors.append(f"{sport_name}: HTTP {code} — {e}")
         except Exception as e:
-            errors.append(f"{sport_name}: {e}")
+            errors.append(f"{sport_name}: {type(e).__name__}: {e}")
 
     progress.empty()
+    status.empty()
     st.session_state["arbs"] = all_arbs
     st.session_state["scan_time"] = datetime.now().strftime("%H:%M:%S")
+    st.session_state["scan_errors"] = errors
 
     if errors:
-        with st.expander("⚠️ Errors", expanded=False):
+        with st.expander(f"⚠️ {len(errors)} sport(s) had issues", expanded=True):
             for err in errors:
                 st.warning(err)
 
