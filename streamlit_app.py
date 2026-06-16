@@ -8,33 +8,76 @@ st.set_page_config(page_title="AU Arb Finder", page_icon="💰", layout="wide")
 # ── Constants ──────────────────────────────────────────────────────────────────
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
-AU_BOOKMAKERS = [
-    "sportsbet", "ladbrokes", "neds", "pointsbet", "tab",
-    "unibet", "bluebet", "betr", "betright", "draftstars",
-]
+AU_BOOKMAKERS = {
+    # Major AU corporate bookmakers
+    "SportsBet":        "sportsbet",
+    "Ladbrokes AU":     "ladbrokes",
+    "Neds":             "neds",
+    "PointsBet AU":     "pointsbet",
+    "TAB":              "tab",
+    "Unibet AU":        "unibet",
+    "BlueBet":          "bluebet",
+    "Betr":             "betr",
+    "BetRight":         "betright",
+    "Draftstars":       "draftstars",
+    # Additional AU bookmakers
+    "Bet365 AU":        "bet365",
+    "Palmerbet":        "palmerbet",
+    "TopSport":         "topsport",
+    "BoomBet":          "boombet",
+    "Bookmaker.com.au": "bookmaker",
+    "Bonus Bet":        "bonusbet",
+    "Elitebet":         "elitebet",
+    "Tab NZ":           "tab_nz",
+}
 
-EXCHANGE_BOOKMAKERS = [
-    "betfair_ex_best_odds",
-    "betfair_ex_averaged_odds",
-]
+EXCHANGE_BOOKMAKERS = {
+    "Betfair Exchange (Best Odds)":     "betfair_ex_best_odds",
+    "Betfair Exchange (Averaged Odds)": "betfair_ex_averaged_odds",
+}
 
 SPORTS_OPTIONS = {
-    "AFL": "aussierules_afl",
-    "NRL": "rugbyleague_nrl",
-    "Soccer - A-League": "soccer_australia_aleague",
-    "Cricket - BBL": "cricket_big_bash",
-    "Basketball - NBL": "basketball_nbl",
-    "Tennis - ATP": "tennis_atp_us_open",
-    "Soccer - EPL": "soccer_epl",
-    "Soccer - Champions League": "soccer_uefa_champs_league",
-    "American Football - NFL": "americanfootball_nfl",
-    "MMA - UFC": "mma_mixed_martial_arts",
+    # Australian
+    "AFL":                          "aussierules_afl",
+    "NRL":                          "rugbyleague_nrl",
+    "Soccer - A-League":            "soccer_australia_aleague",
+    "Cricket - BBL":                "cricket_big_bash",
+    "Basketball - NBL":             "basketball_nbl",
+    "Rugby Union - Super Rugby":    "rugbyunion_super_rugby",
+    # International popular in AU
+    "Soccer - EPL":                 "soccer_epl",
+    "Soccer - Champions League":    "soccer_uefa_champs_league",
+    "Soccer - Europa League":       "soccer_uefa_europa_conference_league",
+    "Soccer - La Liga":             "soccer_spain_la_liga",
+    "Soccer - Serie A":             "soccer_italy_serie_a",
+    "Soccer - Bundesliga":          "soccer_germany_bundesliga",
+    "Soccer - Ligue 1":             "soccer_france_ligue_one",
+    "American Football - NFL":      "americanfootball_nfl",
+    "American Football - NCAAF":    "americanfootball_ncaaf",
+    "Basketball - NBA":             "basketball_nba",
+    "Baseball - MLB":               "baseball_mlb",
+    "Ice Hockey - NHL":             "icehockey_nhl",
+    "Tennis - ATP":                 "tennis_atp_us_open",
+    "Tennis - WTA":                 "tennis_wta_us_open",
+    "MMA - UFC":                    "mma_mixed_martial_arts",
+    "Boxing":                       "boxing_boxing",
+    "Golf - PGA Tour":              "golf_pga_tour",
+    "Golf - Masters":               "golf_masters_tournament_winner",
 }
 
 MARKET_OPTIONS = {
-    "Head-to-Head (Win/Loss)": "h2h",
-    "Totals (Over/Under)": "totals",
-    "Spreads (Handicap)": "spreads",
+    "Head-to-Head (Win/Loss)":          "h2h",
+    "Totals (Over/Under)":              "totals",
+    "Spreads (Handicap)":               "spreads",
+    "Alternate Totals":                 "alternate_totals",
+    "Alternate Spreads":                "alternate_spreads",
+    "Draw No Bet":                      "draw_no_bet",
+    "Both Teams to Score":              "btts",
+    "1st Half - H2H":                   "h2h_h1",
+    "1st Half - Totals":                "totals_h1",
+    "1st Half - Spreads":               "spreads_h1",
+    "1st Quarter - H2H":                "h2h_q1",
+    "1st Quarter - Totals":             "totals_q1",
 }
 
 MARKET_LABELS = {v: k for k, v in MARKET_OPTIONS.items()}
@@ -132,31 +175,32 @@ def find_arbs(events: list[dict], betfair_commission: float, min_profit: float) 
 
 def _get_valid_pairs(market_key: str, best: dict) -> list[list[str]]:
     """
-    For h2h: one pair of all outcomes (2 or 3-way).
-    For totals/spreads: match Over X with Under X at the same line.
+    For h2h-style markets: one group of all outcomes.
+    For totals-style: pair Over X with Under X at the same line.
+    For spreads-style: pair Team A -X with Team B +X.
     """
-    if market_key == "h2h":
+    is_totals = any(market_key.startswith(p) for p in ("totals", "alternate_totals"))
+    is_spreads = any(market_key.startswith(p) for p in ("spreads", "alternate_spreads"))
+    is_h2h = not is_totals and not is_spreads  # h2h, draw_no_bet, btts, h2h_h1, h2h_q1, etc.
+
+    if is_h2h:
         return [list(best.keys())]
 
-    if market_key == "totals":
-        # Group by line value: Over 44.5 pairs with Under 44.5
+    if is_totals:
         lines: dict[str, list[str]] = {}
         for okey in best:
             parts = okey.rsplit(" ", 1)
             if len(parts) == 2:
-                line = parts[1]
-                lines.setdefault(line, []).append(okey)
+                lines.setdefault(parts[1], []).append(okey)
         return [pair for pair in lines.values() if len(pair) == 2]
 
-    if market_key == "spreads":
-        # Group by absolute line: Team A -3.5 pairs with Team B +3.5
+    if is_spreads:
         lines: dict[str, list[str]] = {}
         for okey in best:
             parts = okey.rsplit(" ", 1)
             if len(parts) == 2:
                 try:
-                    line = str(abs(float(parts[1])))
-                    lines.setdefault(line, []).append(okey)
+                    lines.setdefault(str(abs(float(parts[1]))), []).append(okey)
                 except ValueError:
                     pass
         return [pair for pair in lines.values() if len(pair) == 2]
@@ -202,8 +246,8 @@ with st.sidebar:
     selected_markets = st.multiselect(
         "Market types",
         list(MARKET_OPTIONS.keys()),
-        default=list(MARKET_OPTIONS.keys()),
-        help="Totals and Spreads often have more arbs than H2H",
+        default=["Head-to-Head (Win/Loss)", "Totals (Over/Under)", "Spreads (Handicap)"],
+        help="More markets = more API requests used. Alternate lines & halves often have bigger gaps.",
     )
 
     st.subheader("Bookmakers")
@@ -216,11 +260,16 @@ with st.sidebar:
         betfair_commission = 0.05
 
     if use_au_books:
-        selected_books = st.multiselect("Select AU bookmakers", AU_BOOKMAKERS, default=AU_BOOKMAKERS)
+        selected_book_names = st.multiselect(
+            "Select AU bookmakers",
+            list(AU_BOOKMAKERS.keys()),
+            default=list(AU_BOOKMAKERS.keys()),
+        )
+        selected_books = [AU_BOOKMAKERS[n] for n in selected_book_names]
     else:
         selected_books = []
 
-    all_books = selected_books + (EXCHANGE_BOOKMAKERS if use_betfair else [])
+    all_books = selected_books + (list(EXCHANGE_BOOKMAKERS.values()) if use_betfair else [])
 
     st.markdown("---")
     min_profit = st.slider("Min profit % to show", 0.0, 5.0, 0.1, 0.05)
@@ -232,7 +281,7 @@ with st.sidebar:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 st.title("💰 Australian Sportsbook Arbitrage Finder")
-st.caption("Scans AU bookmakers + Betfair Exchange across H2H, Totals, and Spreads markets.")
+st.caption("18 AU bookmakers · Betfair Exchange · 25+ sports · H2H, Totals, Spreads, Alternate lines, Halves & Quarters")
 
 if not api_key:
     st.info("Enter your **The Odds API** key in the sidebar to get started. Free tier = 500 req/month.")
@@ -247,8 +296,12 @@ if not api_key:
     | Market | Description | Arb frequency |
     |--------|-------------|---------------|
     | **H2H** | Back each team to win | Rare — books sync fast |
-    | **Totals** | Over/Under a point total | More common — books price independently |
-    | **Spreads** | Handicap/line betting | Most common — larger pricing gaps |
+    | **Totals** | Over/Under a point total | Moderate |
+    | **Spreads** | Handicap/line betting | Moderate |
+    | **Alternate Totals/Spreads** | Non-standard lines | Higher — more pricing disagreement |
+    | **Draw No Bet** | Soccer: exclude draw outcome | Moderate |
+    | **Both Teams to Score** | Soccer BTTS | Moderate |
+    | **1st Half / 1st Quarter** | Period betting | Higher — books price less carefully |
 
     ### Betfair Exchange
     Betfair lets punters set their own odds, often diverging from bookmaker prices.
