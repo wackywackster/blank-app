@@ -302,16 +302,23 @@ with st.sidebar:
 
     st.subheader(f"Sports ({len(live_sports)} available)")
 
+    available = list(live_sports.keys())
     col_sa, col_sn = st.columns(2)
     if col_sa.button("Select All", key="sel_all", use_container_width=True):
-        st.session_state["sport_selection"] = list(live_sports.keys())
+        st.session_state["sport_selection"] = available
     if col_sn.button("Select None", key="sel_none", use_container_width=True):
         st.session_state["sport_selection"] = []
 
+    # Filter stored selection to only include sports still in the current list
+    stored = st.session_state.get("sport_selection", available)
+    valid_default = [s for s in stored if s in live_sports]
+    if not valid_default:
+        valid_default = available  # fall back to all if nothing valid
+
     selected_sport_names = st.multiselect(
         "Sports to scan",
-        list(live_sports.keys()),
-        default=st.session_state.get("sport_selection", list(live_sports.keys())),
+        available,
+        default=valid_default,
         help=sport_help,
         key="sport_multiselect",
     )
