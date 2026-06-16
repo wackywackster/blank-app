@@ -294,14 +294,30 @@ with st.sidebar:
         live_sports = SPORTS_OPTIONS
         sport_help = "Enter API key to load live sports"
 
-    st.subheader("Sports")
+    st.subheader(f"Sports ({len(live_sports)} available)")
+
+    col_sa, col_sn = st.columns(2)
+    if col_sa.button("Select All", key="sel_all", use_container_width=True):
+        st.session_state["sport_selection"] = list(live_sports.keys())
+    if col_sn.button("Select None", key="sel_none", use_container_width=True):
+        st.session_state["sport_selection"] = []
 
     selected_sport_names = st.multiselect(
         "Sports to scan",
         list(live_sports.keys()),
-        default=list(live_sports.keys())[:5],
+        default=st.session_state.get("sport_selection", list(live_sports.keys())),
         help=sport_help,
+        key="sport_multiselect",
     )
+    # keep button state in sync with manual selection
+    st.session_state["sport_selection"] = selected_sport_names
+
+    n_requests = len(selected_sport_names) * len(
+        st.session_state.get("market_multiselect", []) or
+        ["Head-to-Head (Win/Loss)", "Totals (Over/Under)", "Spreads (Handicap)"]
+    )
+    st.caption(f"{len(selected_sport_names)} selected · ~{n_requests} API requests per scan")
+
     selected_sports = {name: live_sports[name] for name in selected_sport_names}
 
     st.subheader("Markets")
@@ -310,6 +326,7 @@ with st.sidebar:
         list(MARKET_OPTIONS.keys()),
         default=["Head-to-Head (Win/Loss)", "Totals (Over/Under)", "Spreads (Handicap)"],
         help="More markets = more API requests used. Alternate lines & halves often have bigger gaps.",
+        key="market_multiselect",
     )
 
     st.subheader("Bookmakers")
